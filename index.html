@@ -10,128 +10,156 @@
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
-    <script src="https://accounts.google.com/gsi/client" async defer></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800;900&display=swap" rel="stylesheet">
     
+    <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-auth-compat.js"></script>
+
     <style>
-        body { font-family: 'Inter', sans-serif; background-color: #030303; color: #ffffff; margin: 0; padding-bottom: 90px; -webkit-tap-highlight-color: transparent; overflow-x: hidden; }
+        body { font-family: 'Inter', sans-serif; background-color: #030303; color: #ffffff; margin: 0; padding-bottom: 90px; -webkit-tap-highlight-color: transparent; }
         ::-webkit-scrollbar { display: none; }
-        .fade-in { animation: fadeIn 0.4s ease-out forwards; }
-        .glass-panel { background: rgba(255, 255, 255, 0.03); border: 1px solid rgba(255, 255, 255, 0.05); backdrop-filter: blur(15px); }
-        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+        .fade-in { animation: fadeIn 0.3s ease-out; }
         .slide-down { animation: slideDown 0.5s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
+        .glass-panel { background: rgba(255, 255, 255, 0.03); border: 1px solid rgba(255, 255, 255, 0.05); backdrop-filter: blur(12px); }
+        input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(1); }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
         @keyframes slideDown { 0% { transform: translateY(-100%); opacity: 0; } 100% { transform: translateY(0); opacity: 1; } }
     </style>
 </head>
 <body>
     <div id="root"></div>
     <script type="text/babel">
-        const { useState, useEffect, useRef } = React;
+        // --- FIREBASE AYARLARI BURAYA GELECEK ---
+        const firebaseConfig = {
+            apiKey: "BURAYA_API_KEY_GELECEK",
+            authDomain: "BURAYA_AUTH_DOMAIN_GELECEK",
+            projectId: "BURAYA_PROJECT_ID_GELECEK",
+            storageBucket: "BURAYA_STORAGE_BUCKET_GELECEK",
+            messagingSenderId: "BURAYA_MESSAGING_SENDER_ID_GELECEK",
+            appId: "BURAYA_APP_ID_GELECEK"
+        };
+        
+        // Sadece kendi bilgilerini girdiğinde Firebase aktif olsun diye basit bir kontrol:
+        let auth = null;
+        let provider = null;
+        if (firebaseConfig.apiKey !== "BURAYA_API_KEY_GELECEK") {
+            firebase.initializeApp(firebaseConfig);
+            auth = firebase.auth();
+            provider = new firebase.auth.GoogleAuthProvider();
+        }
 
-        // GOOGLE CLIENT ID
-        const GOOGLE_ID = "210104863698-vpjv76kpgk06mqpfkv1lfuen9f4fule3.apps.googleusercontent.com";
+        const { useState, useEffect } = React;
 
         function App() {
-            const [user, setUser] = useState(null);
-            const [loading, setLoading] = useState(true);
-            const [tab, setTab] = useState('ozet');
+            // Google Giriş Stateleri
+            const [kullanici, setKullanici] = useState(null);
+            const [girisYukleniyor, setGirisYukleniyor] = useState(true);
+
+            // Uygulama Stateleri
+            const [aktifSekme, setAktifSekme] = useState('ozet');
             const [kisiler, setKisiler] = useState([]);
             const [islemler, setIslemler] = useState([]);
             const [notlar, setNotlar] = useState([]);
-            const [hatirlatmalar, setHatirlatmalar] = useState([]);
+            const [hatirlaticilar, setHatirlaticilar] = useState([]);
+            
             const [seciliKisi, setSeciliKisi] = useState(null);
             const [islemTipi, setIslemTipi] = useState('borc');
-            const [hesapMakinesi, setHesapMakinesi] = useState({ acik: false, ekran: '' });
-            const [modalGorsel, setModalGorsel] = useState(null);
-            const [modalOdeme, setModalOdeme] = useState(null);
+            const [hesapAcik, setHesapAcik] = useState(false);
+            const [hesapEkrani, setHesapEkrani] = useState('');
+            const [gorselModal, setGorselModal] = useState(null);
+            const [odemeModal, setOdemeModal] = useState(null);
+
             const [motivasyon, setMotivasyon] = useState({ goster: false, metin: '' });
+            const sozler = [
+                "Senin gibi karizma ve vizyonlu biriyle çalışmak harika!",
+                "Allah zorluk verdiyse kolaylığını da verir dayı.",
+                "Allah işine kolaylık, kasana bereket versin.",
+                "Rızkı veren Allah'tır, bugün de işin rast gitsin."
+            ];
 
             const bugun = new Date().toISOString().split('T')[0];
 
-            const handleGoogleResponse = (res) => {
-                const data = JSON.parse(atob(res.credential.split(".")[1]));
-                setUser(data);
-                setLoading(false);
-                setMotivasyon({ goster: true, metin: "Hayırlı işler dayı, sistem hazır!" });
-                setTimeout(() => setMotivasyon({ goster: false, metin: '' }), 3000);
-            };
-
+            // Firebase Oturum Kontrolü
             useEffect(() => {
-                const baslat = () => {
-                    if (window.google) {
-                        google.accounts.id.initialize({ client_id: GOOGLE_ID, callback: handleGoogleResponse });
-                        setLoading(false);
-                    } else { setTimeout(baslat, 300); }
-                };
-                baslat();
+                if (auth) {
+                    const unsubscribe = auth.onAuthStateChanged((user) => {
+                        setKullanici(user);
+                        setGirisYukleniyor(false);
+                    });
+                    return () => unsubscribe();
+                } else {
+                    // Eğer API key girilmediyse, test edebilmen için girişi otomatik atlar
+                    setGirisYukleniyor(false);
+                    setKullanici({ displayName: "Test Kullanıcısı" }); 
+                }
             }, []);
+            useEffect(() => {
+                if (!kullanici) return;
 
-            const cikis = () => { setUser(null); window.location.reload(); };
-                        useEffect(() => {
-                if (!user) return;
-                const dukkanlar = Array.from({ length: 120 }, (_, i) => ({
+                const hazirDukkanlar = Array.from({ length: 120 }, (_, i) => ({
                     id: 'dukkan_' + (i + 1),
                     ad: `Hal No: ${i + 1}`,
                     sabit: true
                 }));
 
-                const prefix = user.email ? `_saha_${btoa(user.email).slice(0, 8)}` : '_saha_test';
-                const k = localStorage.getItem(`k_${prefix}`);
-                const i = localStorage.getItem(`i_${prefix}`);
-                const n = localStorage.getItem(`n_${prefix}`);
-                const h = localStorage.getItem(`h_${prefix}`);
+                const userPrefix = kullanici.uid ? `_${kullanici.uid}` : '';
+                const k = localStorage.getItem(`saha_kisiler_v7${userPrefix}`);
+                const i = localStorage.getItem(`saha_islemler_v7${userPrefix}`);
+                const n = localStorage.getItem(`saha_notlar_v7${userPrefix}`);
+                const h = localStorage.getItem(`saha_hatirlaticilar_v7${userPrefix}`);
                 
-                if(k) setKisiler(JSON.parse(k)); else setKisiler(dukkanlar);
+                if(k) setKisiler(JSON.parse(k)); else setKisiler(hazirDukkanlar);
                 if(i) setIslemler(JSON.parse(i));
                 if(n) setNotlar(JSON.parse(n));
-                if(h) setHatirlatmalar(JSON.parse(h));
-            }, [user]);
+                if(h) setHatirlaticilar(JSON.parse(h));
+            }, [kullanici]);
 
             useEffect(() => {
-                if (!user) return;
-                const prefix = user.email ? `_saha_${btoa(user.email).slice(0, 8)}` : '_saha_test';
-                if(kisiler.length > 0) localStorage.setItem(`k_${prefix}`, JSON.stringify(kisiler));
-                localStorage.setItem(`i_${prefix}`, JSON.stringify(islemler));
-                localStorage.setItem(`n_${prefix}`, JSON.stringify(notlar));
-                localStorage.setItem(`h_${prefix}`, JSON.stringify(hatirlatmalar));
-            }, [kisiler, islemler, notlar, hatirlatmalar, user]);
+                if (!kullanici) return;
+                const userPrefix = kullanici.uid ? `_${kullanici.uid}` : '';
+                if(kisiler.length > 0) localStorage.setItem(`saha_kisiler_v7${userPrefix}`, JSON.stringify(kisiler));
+                localStorage.setItem(`saha_islemler_v7${userPrefix}`, JSON.stringify(islemler));
+                localStorage.setItem(`saha_notlar_v7${userPrefix}`, JSON.stringify(notlar));
+                localStorage.setItem(`saha_hatirlaticilar_v7${userPrefix}`, JSON.stringify(hatirlaticilar));
+            }, [kisiler, islemler, notlar, hatirlaticilar, kullanici]);
 
             useEffect(() => {
-                if ('Notification' in window && Notification.permission === 'granted' && user) {
+                if ('Notification' in window && Notification.permission === 'granted' && kullanici) {
                     const simdi = new Date().getTime();
                     islemler.forEach(islem => {
                         if (islem.kalan > 0 && islem.vade) {
                             const vadeZamani = new Date(islem.vade).getTime();
-                            const fark = Math.ceil((vadeZamani - simdi) / (1000 * 60 * 60 * 24));
-                            if (fark <= 7 && fark >= 0) {
-                                const key = `alert_${islem.id}_${fark}`;
-                                if (!localStorage.getItem(key)) {
+                            const farkGun = Math.ceil((vadeZamani - simdi) / (1000 * 60 * 60 * 24));
+                            if (farkGun <= 7 && farkGun >= 0) {
+                                const anahtar = `uyari_${islem.id}_${farkGun}`;
+                                if (!localStorage.getItem(anahtar)) {
                                     const dukkan = kisiler.find(k => k.id === islem.kisiId)?.ad || 'Bilinmeyen';
+                                    const msg = islem.tip === 'borc' ? 'Ödemeniz' : 'Tahsilatınız';
                                     new Notification("Saha Pro Hatırlatıcı", {
-                                        body: `${dukkan} ödemesine ${fark} gün kaldı! Tutar: ${islem.kalan} TL`
+                                        body: `${dukkan} dükkanına ${msg} için ${farkGun} gün kaldı! Tutar: ${islem.kalan} TL`
                                     });
-                                    localStorage.setItem(key, 'true');
+                                    localStorage.setItem(anahtar, 'true');
                                 }
                             }
                         }
                     });
                 }
-            }, [islemler, kisiler, user]);
+            }, [islemler, kisiler, kullanici]);
 
             useEffect(() => {
-                if (tab === 'gunluk' && user) {
+                if (aktifSekme === 'gunluk' && kullanici) {
                     const ctx = document.getElementById('kazancGrafik');
                     if (ctx) {
-                        if (window.myChart) window.myChart.destroy();
-                        const veri = [...notlar].reverse().slice(-7);
-                        window.myChart = new Chart(ctx, {
+                        if (window.kazancChart) window.kazancChart.destroy();
+                        const grafikVeri = [...notlar].reverse().slice(-7);
+                        window.kazancChart = new Chart(ctx, {
                             type: 'line',
                             data: {
-                                labels: veri.map(v => v.tarih.slice(5)),
+                                labels: grafikVeri.map(n => n.tarih.slice(5)),
                                 datasets: [{
-                                    label: 'TL',
-                                    data: veri.map(v => Number(v.kazanc)),
+                                    label: 'Günlük Kazanç',
+                                    data: grafikVeri.map(n => Number(n.kazanc)),
                                     borderColor: '#10b981',
                                     backgroundColor: 'rgba(16, 185, 129, 0.1)',
                                     borderWidth: 3,
@@ -143,225 +171,235 @@
                         });
                     }
                 }
-            }, [tab, notlar, user]);
+            }, [aktifSekme, notlar, kullanici]);
 
-            const para = (m) => new Intl.NumberFormat('tr-TR', { style: 'currency', currency: 'TRY', maximumFractionDigits: 0 }).format(m || 0);
-
-            const tusla = (t) => {
-                if(t === 'C') setHesapMakinesi({...hesapMakinesi, ekran: ''});
-                else if(t === '=') { try { setHesapMakinesi({...hesapMakinesi, ekran: eval(hesapMakinesi.ekran).toString()}); } catch { setHesapMakinesi({...hesapMakinesi, ekran: 'Hata'}); } }
-                else setHesapMakinesi({...hesapMakinesi, ekran: hesapMakinesi.ekran + t});
+            const girisYap = () => {
+                if(auth && provider) {
+                    auth.signInWithPopup(provider).catch(err => alert("Giriş Hatası: " + err.message));
+                } else {
+                    alert("Firebase bilgileri girilmemiş! Lütfen kodun en üstündeki apiKey kısımlarını doldurun.");
+                }
             };
-                        const pdfIndir = (islem, dAd) => {
-                const el = document.createElement('div');
-                el.innerHTML = `
-                    <div style="padding:40px; font-family:Arial; color:#000; background:#fff; width:450px; border:3px solid #333; border-radius:15px;">
-                        <h1 style="text-align:center; color:#4f46e5; margin-bottom:5px;">SAHA PRO TİCARİ</h1>
-                        <p style="text-align:center; font-size:14px; color:#666;">Bilgi Makbuzu</p>
-                        <hr style="margin:25px 0; border:1px solid #eee;">
-                        <p style="font-size:16px; margin:10px 0;"><strong>Tarih:</strong> ${islem.tarih}</p>
-                        <p style="font-size:16px; margin:10px 0;"><strong>Dükkan:</strong> ${dAd}</p>
-                        <p style="font-size:16px; margin:10px 0;"><strong>Tür:</strong> ${islem.tip === 'borc' ? 'Borç / Alım' : 'Alacak / Satış'}</p>
-                        <p style="font-size:16px; margin:10px 0;"><strong>Açıklama:</strong> ${islem.aciklama || '-'}</p>
-                        <hr style="margin:25px 0; border:1px solid #eee;">
-                        <h2 style="text-align:right; color:#333;">Asıl Tutar: ${para(islem.miktar)}</h2>
-                        <h2 style="text-align:right; color:${islem.tip === 'borc' ? '#dc2626' : '#16a34a'};">Kalan: ${para(islem.kalan)}</h2>
-                        <p style="text-align:center; font-size:11px; margin-top:50px; color:#999;">Saha Pro Dijital Asistan</p>
+
+            const cikisYap = () => {
+                if(auth) auth.signOut();
+                else setKullanici(null);
+            };
+
+            const formatPara = (m) => new Intl.NumberFormat('tr-TR', { style: 'currency', currency: 'TRY', maximumFractionDigits: 0 }).format(m || 0);
+
+            const hesaplaTus = (tus) => {
+                if(tus === 'C') setHesapEkrani('');
+                else if(tus === '=') { try { setHesapEkrani(eval(hesapEkrani).toString()); } catch { setHesapEkrani('Hata'); } } 
+                else setHesapEkrani(hesapEkrani + tus);
+            };
+            const makbuzPDFIndir = (islem, dukkanAd) => {
+                const element = document.createElement('div');
+                element.innerHTML = `
+                    <div style="padding: 30px; font-family: Arial, sans-serif; color: black; background: white; width: 400px; border: 2px solid #333; border-radius: 10px;">
+                        <h1 style="text-align: center; color: #4f46e5; margin-bottom: 5px;">SAHA PRO TİCARİ</h1>
+                        <p style="text-align: center; font-size: 14px; color: gray; margin-top: 0;">Resmi Olmayan Bilgi Makbuzu</p>
+                        <hr style="margin: 20px 0; border: 1px solid #ccc;">
+                        <p style="font-size: 16px;"><strong>İşlem Tarihi:</strong> ${islem.tarih}</p>
+                        <p style="font-size: 16px;"><strong>Firma / Dükkan:</strong> ${dukkanAd}</p>
+                        <p style="font-size: 16px;"><strong>İşlem Türü:</strong> ${islem.tip === 'borc' ? 'Borç / Alınan Mal' : 'Alacak / Verilen Mal'}</p>
+                        <p style="font-size: 16px;"><strong>Açıklama:</strong> ${islem.aciklama || 'Belirtilmedi'}</p>
+                        <hr style="margin: 20px 0; border: 1px solid #ccc;">
+                        <h2 style="text-align: right; color: ${islem.tip === 'borc' ? '#dc2626' : '#16a34a'};">Asıl Tutar: ${formatPara(islem.miktar)}</h2>
+                        <h2 style="text-align: right; color: #333;">Kalan Bakiye: ${formatPara(islem.kalan)}</h2>
+                        <p style="text-align: center; font-size: 10px; margin-top: 40px; color: #888;">Bu makbuz dijital asistan tarafından otomatik oluşturulmuştur.</p>
                     </div>
                 `;
-                html2pdf().set({ margin:1, filename:`Makbuz_${dAd}.pdf`, image:{type:'jpeg', quality:0.98}, html2canvas:{scale:2}, jsPDF:{unit:'in', format:'a5', orientation:'portrait'} }).from(el).save();
+                html2pdf().set({ margin: 1, filename: `Makbuz_${dukkanAd}_${islem.tarih}.pdf`, image: { type: 'jpeg', quality: 0.98 }, html2canvas: { scale: 2 }, jsPDF: { unit: 'in', format: 'a5', orientation: 'portrait' } }).from(element).save();
             };
 
-            const waGonder = (islem, dAd) => {
-                const txt = `*SAHA PRO*%0A%0A*Firma:* ${dAd}%0A*Tarih:* ${islem.tarih}%0A*İşlem:* ${islem.tip === 'borc' ? 'Borç' : 'Alacak'}%0A*Kalan:* ${islem.kalan} TL%0A%0A_Otomatik gönderilmiştir._`;
-                window.open(`https://wa.me/?text=${txt}`, '_blank');
+            const whatsappGonder = (islem, dukkanAd) => {
+                const metin = `*SAHA PRO BİLGİLENDİRME*%0A%0A*Firma:* ${dukkanAd}%0A*Tarih:* ${islem.tarih}%0A*İşlem:* ${islem.tip === 'borc' ? 'Borç' : 'Alacak'}%0A*Açıklama:* ${islem.aciklama || '-'}%0A*Asıl Tutar:* ${islem.miktar} TL%0A*Kalan Bakiye:* ${islem.kalan} TL%0A%0A_Sistem tarafından otomatik gönderilmiştir._`;
+                window.open(`https://wa.me/?text=${metin}`, '_blank');
             };
 
-            const fotoSec = (e, cb) => {
-                const f = e.target.files[0];
-                if (!f) return;
-                const r = new FileReader();
-                r.onloadend = () => cb(r.result);
-                r.readAsDataURL(f);
+            const fotografYukle = (e, callback) => {
+                const file = e.target.files[0];
+                if (!file) return;
+                const reader = new FileReader();
+                reader.onloadend = () => callback(reader.result);
+                reader.readAsDataURL(file);
             };
 
-            // YÜKLENİYOR VE GİRİŞ EKRANI KONTROLLERİ
-            if (loading) return (
-                <div className="min-h-screen flex flex-col items-center justify-center bg-[#030303] fade-in">
-                    <div className="w-20 h-20 border-4 border-indigo-500/20 border-t-indigo-500 rounded-full animate-spin"></div>
-                    <h1 className="text-3xl font-black italic uppercase mt-8 text-white animate-pulse tracking-tighter">Saha Pro</h1>
-                </div>
-            );
+            // YÜKLENİYOR EKRANI
+            if (girisYukleniyor) {
+                return (
+                    <div className="min-h-screen flex items-center justify-center bg-[#030303]">
+                        <div className="w-16 h-16 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin"></div>
+                    </div>
+                );
+            }
 
-            if (!user) return (
-                <div className="min-h-screen flex flex-col items-center justify-center p-6 relative overflow-hidden bg-[#030303]">
-                    <div className="absolute top-1/4 -left-10 w-72 h-72 bg-indigo-600/20 rounded-full blur-3xl"></div>
-                    <div className="absolute bottom-1/4 -right-10 w-72 h-72 bg-emerald-600/10 rounded-full blur-3xl"></div>
-                    
-                    <div className="glass-panel p-12 rounded-[4rem] w-full max-w-sm text-center relative z-10 shadow-2xl border border-white/10">
-                        <div className="w-24 h-24 bg-indigo-600/20 rounded-full flex items-center justify-center mx-auto mb-8 border border-indigo-500/30">
-                            <i className="fa-solid fa-shield-halved text-4xl text-indigo-400"></i>
-                        </div>
-                        <h1 className="text-4xl font-black italic uppercase tracking-tighter mb-4 text-white">Saha Pro</h1>
-                        <p className="text-[11px] text-gray-500 font-black uppercase tracking-[0.4em] mb-12 italic">Dayı Asistanı v3.0</p>
+            // GOOGLE GİRİŞ EKRANI
+            if (!kullanici) {
+                return (
+                    <div className="min-h-screen flex flex-col items-center justify-center p-6 relative overflow-hidden fade-in bg-[#030303]">
+                        <div className="absolute top-1/4 -left-10 w-64 h-64 bg-indigo-600/30 rounded-full blur-3xl"></div>
+                        <div className="absolute bottom-1/4 -right-10 w-64 h-64 bg-emerald-600/20 rounded-full blur-3xl"></div>
                         
-                        <div className="flex justify-center" id="googleBtnContainer">
-                            {useEffect(() => {
-                                if (!user && !loading && window.google) {
-                                    google.accounts.id.renderButton(document.getElementById("googleBtnContainer"), { theme:"filled_blue", size:"large", shape:"pill", width:"280" });
-                                }
-                            }, [user, loading])}
+                        <div className="glass-panel p-10 rounded-[3rem] w-full max-w-sm text-center relative z-10 shadow-2xl border border-white/10">
+                            <div className="w-24 h-24 bg-indigo-600/20 rounded-full flex items-center justify-center mx-auto mb-6 border border-indigo-500/30">
+                                <i className="fa-solid fa-shield-halved text-4xl text-indigo-400"></i>
+                            </div>
+                            <h1 className="text-3xl font-black italic uppercase tracking-tighter mb-2 text-white">Saha Pro</h1>
+                            <p className="text-sm text-gray-400 font-bold mb-10">Lütfen güvenli giriş yapın.</p>
+                            
+                            <button onClick={girisYap} className="w-full bg-white text-black py-4 rounded-2xl font-black uppercase tracking-widest active:scale-95 transition-transform flex items-center justify-center gap-3">
+                                <i className="fa-brands fa-google text-xl text-red-500"></i> Google ile Gir
+                            </button>
                         </div>
                     </div>
-                </div>
-            );
+                );
+            }
 
-            // ANA UYGULAMA DEĞİŞKENLERİ
-            const borclar = islemler.filter(i => i.tip === 'borc' && i.kalan > 0);
-            const alacaklar = islemler.filter(i => i.tip === 'alacak' && i.kalan > 0);
-            const tBorc = borclar.reduce((a,b) => a + Number(b.kalan), 0);
-            const tAlacak = alacaklar.reduce((a,b) => a + Number(b.kalan), 0);
-            const tAlarmlar = hatirlatmalar.filter(h => h.tarih <= bugun);
+            // ANA UYGULAMA HESAPLAMALARI
+            const aktifBorclar = islemler.filter(i => i.tip === 'borc' && i.kalan > 0);
+            const aktifAlacaklar = islemler.filter(i => i.tip === 'alacak' && i.kalan > 0);
+            const toplamBorc = aktifBorclar.reduce((a,b) => a + Number(b.kalan), 0);
+            const toplamAlacak = aktifAlacaklar.reduce((a,b) => a + Number(b.kalan), 0);
+            const aktifAlarmlar = hatirlaticilar.filter(h => h.tarih <= bugun);
 
             return (
                 <div className="min-h-screen relative overflow-hidden">
-                    {motivasyon.goster && (
-                        <div className="fixed top-0 left-0 right-0 bg-emerald-600 text-white z-[999] p-6 text-center slide-down shadow-2xl">
+                    {motivasyon.goster && motivasyon.metin && (
+                        <div className="fixed top-0 left-0 right-0 bg-emerald-600 text-white z-[999] p-6 text-center slide-down shadow-[0_20px_40px_rgba(16,185,129,0.3)]">
                             <p className="font-black text-sm uppercase tracking-widest">{motivasyon.metin}</p>
                         </div>
                     )}
 
-                    <header className="px-6 py-6 border-b border-white/5 sticky top-0 bg-[#030303]/90 backdrop-blur-xl z-40 flex justify-between items-center">
+                    <header className="px-6 py-6 border-b border-white/5 sticky top-0 bg-[#030303]/90 backdrop-blur-xl z-40 shadow-2xl flex justify-between items-center">
                         <div>
                             <h1 className="text-2xl font-black text-indigo-500 italic uppercase tracking-tighter">Saha Pro</h1>
-                            <p className="text-[10px] text-gray-500 font-bold uppercase tracking-widest mt-1">Giriş Yapıldı: {user.name.split(' ')[0]}</p>
+                            <p className="text-[9px] text-gray-500 font-bold uppercase tracking-[0.3em] mt-1">Hoşgeldin, {kullanici.displayName ? kullanici.displayName.split(' ')[0] : 'Dayı'}</p>
                         </div>
-                        <button onClick={cikis} className="w-11 h-11 bg-red-500/10 rounded-full flex items-center justify-center border border-red-500/20 active:scale-90"><i className="fa-solid fa-power-off text-red-500 text-xl"></i></button>
+                        <button onClick={cikisYap} className="w-10 h-10 bg-red-500/10 rounded-full flex items-center justify-center border border-red-500/20 active:scale-90">
+                            <i className="fa-solid fa-arrow-right-from-bracket text-red-400"></i>
+                        </button>
                     </header>
-                                        <main className="p-5 space-y-6 relative z-10 pb-20">
-                        {tab === 'ozet' && (
+
+                    <main className="p-5 space-y-6 relative z-10">
+                        {aktifSekme === 'ozet' && (
                             <div className="space-y-6 fade-in pt-2">
                                 <div className="grid grid-cols-2 gap-4">
-                                    <div className="glass-panel p-6 rounded-[2.5rem] relative overflow-hidden border-red-500/10 shadow-lg">
-                                        <div className="absolute -top-10 -right-10 w-24 h-24 bg-red-500/10 rounded-full blur-2xl"></div>
-                                        <i className="fa-solid fa-arrow-trend-up text-red-500 text-3xl mb-4"></i>
-                                        <p className="text-[10px] text-gray-400 font-black uppercase tracking-widest">Borcum</p>
-                                        <p className="text-xl font-black text-white mt-1">{para(tBorc)}</p>
+                                    <div className="glass-panel p-6 rounded-[2rem] relative overflow-hidden">
+                                        <div className="absolute -top-10 -right-10 w-24 h-24 bg-red-500/20 rounded-full blur-2xl"></div>
+                                        <i className="fa-solid fa-arrow-up-right-dots text-red-500 text-3xl mb-3"></i>
+                                        <p className="text-[10px] text-gray-400 font-black uppercase tracking-widest">Kalan Borcum</p>
+                                        <p className="text-xl font-black text-white mt-1">{formatPara(toplamBorc)}</p>
                                     </div>
-                                    <div className="glass-panel p-6 rounded-[2.5rem] relative overflow-hidden border-emerald-500/10 shadow-lg">
-                                        <div className="absolute -top-10 -right-10 w-24 h-24 bg-emerald-500/10 rounded-full blur-2xl"></div>
-                                        <i className="fa-solid fa-arrow-trend-down text-emerald-500 text-3xl mb-4"></i>
-                                        <p className="text-[10px] text-gray-400 font-black uppercase tracking-widest">Alacağım</p>
-                                        <p className="text-xl font-black text-white mt-1">{para(tAlacak)}</p>
+                                    <div className="glass-panel p-6 rounded-[2rem] relative overflow-hidden">
+                                        <div className="absolute -top-10 -right-10 w-24 h-24 bg-emerald-500/20 rounded-full blur-2xl"></div>
+                                        <i className="fa-solid fa-arrow-down-to-line text-emerald-500 text-3xl mb-3"></i>
+                                        <p className="text-[10px] text-gray-400 font-black uppercase tracking-widest">Kalan Alacağım</p>
+                                        <p className="text-xl font-black text-white mt-1">{formatPara(toplamAlacak)}</p>
                                     </div>
                                 </div>
-
-                                {tAlarmlar.length > 0 && (
-                                    <div className="bg-indigo-500/10 border border-indigo-500/20 p-5 rounded-[2.5rem] animate-pulse">
-                                        <h3 className="text-indigo-400 font-black text-[10px] uppercase tracking-[0.2em] mb-4 flex items-center gap-2">
-                                            <i className="fa-solid fa-bell"></i> Hatırlatmalar
-                                        </h3>
+                                {aktifAlarmlar.length > 0 && (
+                                    <div className="bg-indigo-500/10 border border-indigo-500/30 p-5 rounded-[2rem]">
+                                        <h3 className="text-indigo-400 font-black text-xs uppercase tracking-widest mb-4 flex items-center gap-2"><i className="fa-solid fa-bell animate-pulse"></i> Aktif Hatırlatmalar</h3>
                                         <div className="space-y-3">
-                                            {tAlarmlar.map(h => (
-                                                <div key={h.id} className="bg-black/40 p-4 rounded-2xl border border-white/5 flex justify-between items-center shadow-inner">
-                                                    <span className="font-bold text-white text-[13px]">{h.baslik}</span>
-                                                    <button onClick={() => setHatirlatmalar(hatirlatmalar.filter(x => x.id !== h.id))} className="w-8 h-8 bg-indigo-500/30 text-indigo-400 rounded-full flex items-center justify-center border border-indigo-500/30 active:scale-90"><i className="fa-solid fa-check text-xs"></i></button>
+                                            {aktifAlarmlar.map(h => (
+                                                <div key={h.id} className="bg-black/50 p-4 rounded-2xl border border-white/5 flex justify-between items-center">
+                                                    <span className="font-bold text-white text-sm">{h.baslik}</span>
+                                                    <button onClick={() => setHatirlaticilar(hatirlaticilar.filter(x => x.id !== h.id))} className="w-8 h-8 bg-indigo-500/20 text-indigo-400 rounded-full flex items-center justify-center"><i className="fa-solid fa-check"></i></button>
                                                 </div>
                                             ))}
                                         </div>
                                     </div>
                                 )}
                                 
-                                <button onClick={() => setTab('defter')} className="w-full glass-panel p-7 rounded-[3rem] flex items-center justify-between group active:scale-95 transition-all shadow-2xl border-white/10">
-                                    <div className="flex items-center gap-5">
-                                        <div className="w-14 h-14 bg-indigo-500/20 rounded-[1.5rem] flex items-center justify-center border border-indigo-500/30 shadow-inner group-hover:rotate-0 transition-transform">
-                                            <i className="fa-solid fa-layer-group text-indigo-400 text-2xl"></i>
-                                        </div>
+                                <button onClick={() => setAktifSekme('defter')} className="w-full glass-panel p-6 rounded-[2rem] flex items-center justify-between group active:scale-95 transition-all">
+                                    <div className="flex items-center gap-4">
+                                        <div className="w-12 h-12 bg-indigo-500/20 rounded-full flex items-center justify-center border border-indigo-500/30"><i className="fa-solid fa-book-open text-indigo-400 text-xl"></i></div>
                                         <div className="text-left">
-                                            <h3 className="text-white font-black text-xl uppercase tracking-tighter">Defteri Aç</h3>
-                                            <p className="text-[10px] text-gray-500 font-bold uppercase tracking-widest mt-1 italic">Tüm borç-alacak dökümü</p>
+                                            <h3 className="text-white font-black text-lg">Ayrıntılı Defter</h3>
+                                            <p className="text-[10px] text-gray-400 uppercase tracking-widest mt-1">Borç ve Alacak Listesi</p>
                                         </div>
                                     </div>
-                                    <i className="fa-solid fa-chevron-right text-gray-600 group-hover:translate-x-1 transition-transform"></i>
+                                    <i className="fa-solid fa-chevron-right text-gray-500"></i>
                                 </button>
                             </div>
                         )}
-                                                                    {tab === 'defter' && (
+
+                        {aktifSekme === 'defter' && (
                             <div className="space-y-6 fade-in pt-2">
-                                <div className="flex justify-between items-center glass-panel p-4 rounded-[1.8rem] shadow-lg border-white/5">
-                                    <button onClick={() => setTab('ozet')} className="text-[10px] font-black text-gray-400 uppercase tracking-widest bg-black/60 px-5 py-2.5 rounded-xl border border-white/10 active:scale-90"><i className="fa-solid fa-chevron-left mr-2"></i> Geri</button>
-                                    <h2 className="text-lg font-black text-white uppercase tracking-tighter mr-2 italic">Defter Listesi</h2>
+                                <div className="flex justify-between items-center glass-panel p-4 rounded-[1.5rem]">
+                                    <button onClick={() => setAktifSekme('ozet')} className="text-[10px] font-black text-gray-400 uppercase tracking-widest bg-black/50 px-4 py-2 rounded-xl"><i className="fa-solid fa-chevron-left mr-2"></i> Geri</button>
+                                    <h2 className="text-lg font-black text-white uppercase tracking-tighter">Defter Listesi</h2>
                                 </div>
 
                                 <div className="space-y-6">
-                                    <div className="glass-panel p-6 rounded-[3rem] border-red-500/10 shadow-xl">
-                                        <h3 className="text-[10px] font-black text-red-500 uppercase tracking-[0.3em] mb-5 ml-2 flex items-center gap-2"><i className="fa-solid fa-hand-holding-dollar"></i> Ödemelerim</h3>
+                                    <div className="glass-panel p-5 rounded-[2rem] border-red-500/20">
+                                        <h3 className="text-xs font-black text-red-500 uppercase tracking-widest mb-4 flex items-center gap-2"><i className="fa-solid fa-hand-holding-dollar"></i> Ödemem Gerekenler (Borçlarım)</h3>
                                         <div className="space-y-3">
-                                            {borclar.map(i => {
-                                                const d = kisiler.find(k => k.id === i.kisiId);
+                                            {aktifBorclar.map(i => {
+                                                const dukkan = kisiler.find(k => k.id === i.kisiId);
                                                 return (
-                                                    <div key={i.id} onClick={() => {setSeciliKisi(d); setTab('kisiler'); setIslemTipi('borc');}} className="bg-black/60 p-5 rounded-[1.8rem] border border-white/5 flex justify-between items-center active:bg-white/5 transition-all shadow-inner">
+                                                    <div key={i.id} onClick={() => {setSeciliKisi(dukkan); setAktifSekme('kisiler'); setIslemTipi('borc');}} className="bg-black/50 p-4 rounded-2xl border border-white/5 flex justify-between items-center cursor-pointer">
                                                         <div>
-                                                            <p className="font-black text-white text-[13px] uppercase tracking-tighter">{d?.ad}</p>
-                                                            <p className="text-[9px] text-gray-500 font-bold uppercase mt-1 tracking-widest">Vade: {i.vade || 'Yok'}</p>
+                                                            <p className="font-bold text-white text-sm">{dukkan?.ad}</p>
+                                                            <p className="text-[9px] text-gray-500 uppercase mt-1">Vade: {i.vade || 'Belirtilmedi'}</p>
                                                         </div>
-                                                        <span className="font-black text-red-400 text-lg tracking-tighter">{para(i.kalan)}</span>
+                                                        <span className="font-black text-red-400">{formatPara(i.kalan)}</span>
                                                     </div>
                                                 );
                                             })}
-                                            {borclar.length === 0 && <p className="text-[10px] text-gray-700 font-bold uppercase py-6 text-center italic tracking-[0.2em]">Borç kaydı bulunmuyor.</p>}
+                                            {aktifBorclar.length === 0 && <p className="text-[10px] text-gray-600 font-bold uppercase py-2">Borç kaydı yok.</p>}
                                         </div>
                                     </div>
 
-                                    <div className="glass-panel p-6 rounded-[3rem] border-emerald-500/10 shadow-xl">
-                                        <h3 className="text-[10px] font-black text-emerald-500 uppercase tracking-[0.3em] mb-5 ml-2 flex items-center gap-2"><i className="fa-solid fa-sack-dollar"></i> Tahsilatlar</h3>
+                                    <div className="glass-panel p-5 rounded-[2rem] border-emerald-500/20">
+                                        <h3 className="text-xs font-black text-emerald-500 uppercase tracking-widest mb-4 flex items-center gap-2"><i className="fa-solid fa-sack-dollar"></i> Tahsil Edeceklerim (Alacaklarım)</h3>
                                         <div className="space-y-3">
-                                            {alacaklar.map(i => {
-                                                const d = kisiler.find(k => k.id === i.kisiId);
+                                            {aktifAlacaklar.map(i => {
+                                                const dukkan = kisiler.find(k => k.id === i.kisiId);
                                                 return (
-                                                    <div key={i.id} onClick={() => {setSeciliKisi(d); setTab('kisiler'); setIslemTipi('alacak');}} className="bg-black/60 p-5 rounded-[1.8rem] border border-white/5 flex justify-between items-center active:bg-white/5 transition-all shadow-inner">
+                                                    <div key={i.id} onClick={() => {setSeciliKisi(dukkan); setAktifSekme('kisiler'); setIslemTipi('alacak');}} className="bg-black/50 p-4 rounded-2xl border border-white/5 flex justify-between items-center cursor-pointer">
                                                         <div>
-                                                            <p className="font-black text-white text-[13px] uppercase tracking-tighter">{d?.ad}</p>
-                                                            <p className="text-[9px] text-gray-500 font-bold uppercase mt-1 tracking-widest">Vade: {i.vade || 'Yok'}</p>
+                                                            <p className="font-bold text-white text-sm">{dukkan?.ad}</p>
+                                                            <p className="text-[9px] text-gray-500 uppercase mt-1">Vade: {i.vade || 'Belirtilmedi'}</p>
                                                         </div>
-                                                        <span className="font-black text-emerald-400 text-lg tracking-tighter">{para(i.kalan)}</span>
+                                                        <span className="font-black text-emerald-400">{formatPara(i.kalan)}</span>
                                                     </div>
                                                 );
                                             })}
-                                            {alacaklar.length === 0 && <p className="text-[10px] text-gray-700 font-bold uppercase py-6 text-center italic tracking-[0.2em]">Alacak kaydı bulunmuyor.</p>}
+                                            {aktifAlacaklar.length === 0 && <p className="text-[10px] text-gray-600 font-bold uppercase py-2">Alacak kaydı yok.</p>}
                                         </div>
                                     </div>
                                 </div>
                             </div>
                         )}
 
-                        {tab === 'kisiler' && !seciliKisi && (
+                        {aktifSekme === 'kisiler' && !seciliKisi && (
                             <div className="space-y-6 fade-in pt-2">
                                 <form onSubmit={(e) => {
                                     e.preventDefault();
                                     const ad = e.target.ad.value;
                                     setKisiler([{ id: Date.now(), ad, sabit: false }, ...kisiler]);
                                     e.target.reset();
-                                }} className="glass-panel p-5 rounded-[2.2rem] flex gap-3 border-indigo-500/10 shadow-2xl bg-indigo-500/5">
-                                    <input name="ad" placeholder="Dükkan / Hal No Ekle" className="flex-1 bg-black/60 border border-white/10 rounded-2xl p-4 text-[13px] font-black outline-none text-white focus:border-indigo-500 shadow-inner placeholder:text-gray-600" required />
-                                    <button type="submit" className="bg-indigo-600 text-white w-14 rounded-2xl font-black active:scale-90 shadow-lg shadow-indigo-600/30 flex items-center justify-center"><i className="fa-solid fa-plus text-lg"></i></button>
+                                }} className="glass-panel p-5 rounded-[2rem] flex gap-3">
+                                    <input name="ad" placeholder="Özel Dükkan/Kişi Ekle" className="w-full bg-black/50 border border-white/10 rounded-2xl p-4 text-sm font-bold outline-none text-white focus:border-indigo-500" required />
+                                    <button type="submit" className="bg-indigo-600 text-white px-6 rounded-2xl font-black active:scale-95"><i className="fa-solid fa-plus"></i></button>
                                 </form>
 
                                 <div className="space-y-3">
                                     {kisiler.map(k => {
-                                        const kBorc = islemler.filter(i => i.kisiId === k.id && i.tip === 'borc').reduce((a,b) => a + Number(b.kalan), 0);
-                                        const kAlacak = islemler.filter(i => i.kisiId === k.id && i.tip === 'alacak').reduce((a,b) => a + Number(b.kalan), 0);
+                                        const kisiBorc = islemler.filter(i => i.kisiId === k.id && i.tip === 'borc').reduce((a,b) => a + Number(b.kalan), 0);
+                                        const kisiAlacak = islemler.filter(i => i.kisiId === k.id && i.tip === 'alacak').reduce((a,b) => a + Number(b.kalan), 0);
                                         return (
-                                            <div key={k.id} onClick={() => setSeciliKisi(k)} className="glass-panel p-5 rounded-[2.2rem] flex justify-between items-center active:bg-white/5 transition-all group border-white/5 shadow-lg">
-                                                <div className="flex items-center gap-5">
-                                                    <div className="w-12 h-12 bg-black/60 rounded-full flex items-center justify-center border border-white/5 shadow-inner group-hover:border-indigo-500/30 transition-colors">
-                                                        <i className="fa-solid fa-store text-gray-500 group-hover:text-indigo-400"></i>
-                                                    </div>
-                                                    <h3 className="font-black text-white text-[13px] uppercase tracking-tighter italic">{k.ad}</h3>
+                                            <div key={k.id} onClick={() => setSeciliKisi(k)} className="glass-panel p-5 rounded-[2rem] flex justify-between items-center cursor-pointer hover:bg-white/5 group">
+                                                <div className="flex items-center gap-4">
+                                                    <div className="w-12 h-12 bg-black/50 rounded-full flex items-center justify-center border border-white/5"><i className="fa-solid fa-store text-gray-400"></i></div>
+                                                    <h3 className="font-black text-white text-sm">{k.ad}</h3>
                                                 </div>
-                                                <div className="text-right flex flex-col gap-1.5">
-                                                    {kBorc > 0 && <span className="text-[9px] font-black text-red-400 bg-red-600/10 px-3 py-1.5 rounded-xl uppercase tracking-widest border border-red-500/10">{para(kBorc)}</span>}
-                                                    {kAlacak > 0 && <span className="text-[9px] font-black text-emerald-400 bg-emerald-600/10 px-3 py-1.5 rounded-xl uppercase tracking-widest border border-emerald-500/10">{para(kAlacak)}</span>}
+                                                <div className="text-right flex flex-col gap-1">
+                                                    {kisiBorc > 0 && <span className="text-[9px] font-black text-red-400 bg-red-500/10 px-2 py-1 rounded-md">Borç: {formatPara(kisiBorc)}</span>}
+                                                    {kisiAlacak > 0 && <span className="text-[9px] font-black text-emerald-400 bg-emerald-500/10 px-2 py-1 rounded-md">Alacak: {formatPara(kisiAlacak)}</span>}
                                                 </div>
                                             </div>
                                         );
@@ -369,173 +407,198 @@
                                 </div>
                             </div>
                         )}
-                                                                   {tab === 'kisiler' && seciliKisi && (
-                            <div className="space-y-6 fade-in pt-2 pb-10">
-                                <div className="flex justify-between items-center glass-panel p-4 rounded-[1.8rem] border-white/5 shadow-xl">
-                                    <button onClick={() => setSeciliKisi(null)} className="text-[10px] font-black text-gray-400 uppercase tracking-widest bg-black/60 px-5 py-2.5 rounded-xl border border-white/10 active:scale-90"><i className="fa-solid fa-chevron-left mr-2"></i> Geri</button>
-                                    <h2 className="text-lg font-black text-white uppercase tracking-tighter truncate max-w-[150px] italic">{seciliKisi.ad}</h2>
+                        {aktifSekme === 'kisiler' && seciliKisi && (
+                            <div className="space-y-6 fade-in pt-2">
+                                <div className="flex justify-between items-center glass-panel p-4 rounded-[1.5rem]">
+                                    <button onClick={() => setSeciliKisi(null)} className="text-[10px] font-black text-gray-400 uppercase tracking-widest bg-black/50 px-4 py-2 rounded-xl"><i className="fa-solid fa-chevron-left mr-2"></i> Geri</button>
+                                    <h2 className="text-lg font-black text-white uppercase tracking-tighter truncate max-w-[150px]">{seciliKisi.ad}</h2>
                                 </div>
 
-                                <div className="flex bg-black/60 rounded-[1.8rem] p-1.5 border border-white/10 shadow-inner">
-                                    <button onClick={() => setIslemTipi('borc')} className={`flex-1 py-3.5 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all ${islemTipi === 'borc' ? 'bg-red-600 text-white shadow-lg' : 'text-gray-600'}`}>BORÇLARIM</button>
-                                    <button onClick={() => setIslemTipi('alacak')} className={`flex-1 py-3.5 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all ${islemTipi === 'alacak' ? 'bg-emerald-600 text-white shadow-lg' : 'text-gray-600'}`}>ALACAKLARIM</button>
+                                <div className="flex bg-black/60 rounded-[1.5rem] p-1.5 border border-white/10">
+                                    <button onClick={() => setIslemTipi('borc')} className={`flex-1 py-3 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all ${islemTipi === 'borc' ? 'bg-red-600 text-white' : 'text-gray-500'}`}>BENİM BORCUM</button>
+                                    <button onClick={() => setIslemTipi('alacak')} className={`flex-1 py-3 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all ${islemTipi === 'alacak' ? 'bg-emerald-600 text-white' : 'text-gray-500'}`}>ALACAĞIM</button>
                                 </div>
 
                                 <form onSubmit={(e) => {
                                     e.preventDefault();
-                                    const f = e.target.foto;
-                                    const nI = {
+                                    const fotoInp = e.target.foto;
+                                    const yeniIslem = {
                                         id: Date.now(), kisiId: seciliKisi.id, tip: islemTipi,
                                         miktar: Number(e.target.miktar.value), kalan: Number(e.target.miktar.value),
                                         aciklama: e.target.aciklama.value, tarih: e.target.tarih.value, vade: e.target.vade.value, odemeler: []
                                     };
-                                    const sv = (b64) => { nI.foto = b64; setIslemler([nI, ...islemler]); e.target.reset(); };
-                                    if(f.files && f.files[0]) { fotoSec({target: f}, sv); } else { sv(null); }
-                                }} className="glass-panel p-7 rounded-[3rem] space-y-4 border-white/10 shadow-2xl">
-                                    <input name="miktar" type="number" placeholder="Tutar (₺)" className="w-full bg-black/60 border border-white/10 rounded-2xl p-5 text-2xl font-black text-white outline-none focus:border-indigo-500 shadow-inner" required />
-                                    <input name="aciklama" placeholder="Not (Örn: 10 Kasa Elma)" className="w-full bg-black/60 border border-white/10 rounded-2xl p-4 text-sm font-bold text-white outline-none" />
+                                    const kaydet = (fotoBas64) => { yeniIslem.foto = fotoBas64; setIslemler([yeniIslem, ...islemler]); e.target.reset(); };
+                                    if(fotoInp.files && fotoInp.files[0]) { fotografYukle({target: fotoInp}, kaydet); } else { kaydet(null); }
+                                }} className="glass-panel p-5 rounded-[2rem] space-y-4">
+                                    <h3 className="text-[10px] text-gray-400 font-black uppercase tracking-widest ml-2">Yeni Kayıt Ekle</h3>
+                                    <input name="miktar" type="number" placeholder="Toplam Tutar (₺)" className="w-full bg-black/50 border border-white/10 rounded-2xl p-5 text-xl font-black text-white outline-none focus:border-indigo-500" required />
+                                    <input name="aciklama" placeholder="Açıklama (Örn: 2 Kasa Domates)" className="w-full bg-black/50 border border-white/10 rounded-2xl p-4 text-sm font-bold text-white outline-none" />
                                     <div className="grid grid-cols-2 gap-3">
-                                        <div className="relative"><label className="absolute -top-2 left-4 bg-[#0a0a0b] px-1 text-[8px] font-black text-gray-500 uppercase">İşlem</label><input name="tarih" type="date" className="w-full bg-black/60 border border-white/10 rounded-2xl p-4 text-xs font-bold text-white outline-none" defaultValue={bugun} required /></div>
-                                        <div className="relative"><label className="absolute -top-2 left-4 bg-[#0a0a0b] px-1 text-[8px] font-black text-gray-500 uppercase">Vade</label><input name="vade" type="date" className="w-full bg-black/60 border border-white/10 rounded-2xl p-4 text-xs font-bold text-white outline-none" /></div>
+                                        <div className="relative"><label className="absolute -top-2 left-4 bg-[#0a0a0b] px-1 text-[8px] font-black text-gray-500">İşlem Tarihi</label><input name="tarih" type="date" className="w-full bg-black/50 border border-white/10 rounded-2xl p-4 text-xs font-bold text-white outline-none" defaultValue={bugun} required /></div>
+                                        <div className="relative"><label className="absolute -top-2 left-4 bg-[#0a0a0b] px-1 text-[8px] font-black text-gray-500">Söz/Vade Tarihi</label><input name="vade" type="date" className="w-full bg-black/50 border border-white/10 rounded-2xl p-4 text-xs font-bold text-white outline-none" /></div>
                                     </div>
-                                    <label className="bg-white/5 border border-white/10 p-4 rounded-2xl flex items-center justify-center cursor-pointer text-[11px] font-black text-gray-400 border-dashed">
-                                        <i className="fa-solid fa-camera mr-2"></i> Fatura Çek
+                                    <label className="bg-white/5 border border-white/10 p-4 rounded-2xl flex items-center justify-center cursor-pointer text-xs font-bold text-gray-400 hover:text-white transition-colors">
+                                        <i className="fa-solid fa-camera mr-2"></i> Fatura Ekle (İsteğe Bağlı)
                                         <input type="file" name="foto" accept="image/*" className="hidden" />
                                     </label>
-                                    <button type="submit" className={`w-full py-5 rounded-2xl font-black text-xs uppercase tracking-widest text-white active:scale-95 ${islemTipi === 'borc' ? 'bg-red-600' : 'bg-emerald-600'}`}>HESABA İŞLE</button>
+                                    <button type="submit" className={`w-full py-4 rounded-2xl font-black text-xs uppercase tracking-[0.2em] text-white active:scale-95 ${islemTipi === 'borc' ? 'bg-red-600' : 'bg-emerald-600'}`}>KAYDET</button>
                                 </form>
 
                                 <div className="space-y-4">
                                     {islemler.filter(i => i.kisiId === seciliKisi.id && i.tip === islemTipi).map(i => (
-                                        <div key={i.id} className="glass-panel p-6 rounded-[2.5rem] relative overflow-hidden group border-white/5">
-                                            <div className={`absolute left-0 top-0 bottom-0 w-1.5 ${islemTipi === 'borc' ? 'bg-red-600' : 'bg-emerald-600'}`}></div>
-                                            <div className="flex justify-between items-start mb-4">
+                                        <div key={i.id} className="glass-panel p-5 rounded-[2rem] relative overflow-hidden">
+                                            <div className="flex justify-between items-start mb-2">
                                                 <div>
-                                                    <p className="text-[10px] font-black text-gray-500 uppercase mb-1 tracking-widest">Kalan</p>
-                                                    <p className={`text-2xl font-black ${i.kalan === 0 ? 'text-gray-600 line-through opacity-40' : (islemTipi === 'borc' ? 'text-red-400' : 'text-emerald-400')}`}>{para(i.kalan)}</p>
+                                                    <p className="text-[10px] font-black text-gray-500 uppercase tracking-widest mb-1">Kalan Tutar</p>
+                                                    <p className={`text-2xl font-black ${i.kalan === 0 ? 'text-gray-500 line-through' : (islemTipi === 'borc' ? 'text-red-400' : 'text-emerald-400')}`}>{formatPara(i.kalan)}</p>
+                                                    <p className="text-xs text-gray-400 font-bold mt-1">Asıl İşlem: {formatPara(i.miktar)}</p>
                                                 </div>
-                                                <button onClick={() => setIslemler(islemler.filter(x => x.id !== i.id))} className="text-gray-600 hover:text-red-500 active:scale-75"><i className="fa-solid fa-trash-can"></i></button>
+                                                <button onClick={() => { if(confirm('Silmek istiyor musunuz?')) setIslemler(islemler.filter(x => x.id !== i.id)); }} className="w-8 h-8 bg-black/50 text-gray-500 hover:text-red-500 rounded-full flex items-center justify-center"><i className="fa-solid fa-trash-can text-xs"></i></button>
                                             </div>
-                                            <p className="text-xs font-bold text-white italic mb-4">{i.aciklama || 'Açıklama yok'}</p>
+                                            <p className="text-sm font-bold text-white mt-2 mb-4">{i.aciklama}</p>
                                             
-                                            <div className="grid grid-cols-2 gap-2 mt-4 pt-4 border-t border-white/5">
-                                                {i.kalan > 0 && <button onClick={() => setModalOdeme(i)} className="bg-white/10 py-3 rounded-xl text-[10px] font-black text-white uppercase"><i className="fa-solid fa-hand-holding-dollar mr-1"></i> Ödeme</button>}
-                                                <button onClick={() => pdfIndir(i, seciliKisi.ad)} className="bg-indigo-600/10 text-indigo-400 py-3 rounded-xl text-[10px] font-black uppercase"><i className="fa-solid fa-file-pdf mr-1"></i> PDF</button>
-                                                <button onClick={() => waGonder(i, seciliKisi.ad)} className="bg-green-600/10 text-green-400 py-3 rounded-xl text-[10px] font-black uppercase"><i className="fa-brands fa-whatsapp mr-1"></i> Paylaş</button>
-                                                {i.foto && <button onClick={() => setModalGorsel(i.foto)} className="bg-white/5 py-3 rounded-xl text-[10px] font-black text-gray-500 uppercase"><i className="fa-solid fa-image mr-1"></i> Fatura</button>}
+                                            {i.odemeler && i.odemeler.length > 0 && (
+                                                <div className="bg-black/30 rounded-xl p-3 mb-4 space-y-2">
+                                                    <p className="text-[9px] font-black text-gray-500 uppercase tracking-widest border-b border-white/5 pb-1">Ödeme Geçmişi</p>
+                                                    {i.odemeler.map((o, idx) => (
+                                                        <div key={idx} className="flex justify-between text-xs text-gray-300 font-bold"><span>{o.tarih}</span><span className="text-emerald-400">-{formatPara(o.miktar)}</span></div>
+                                                    ))}
+                                                </div>
+                                            )}
+
+                                            <div className="flex flex-wrap gap-2 mt-2 pt-4 border-t border-white/5">
+                                                {i.kalan > 0 && <button onClick={() => setOdemeModal(i)} className="flex-1 bg-white/10 py-3 rounded-xl text-xs font-black text-white hover:bg-white/20"><i className="fa-solid fa-hand-holding-dollar mr-1"></i> Borç Düş</button>}
+                                                <button onClick={() => makbuzPDFIndir(i, seciliKisi.ad)} className="flex-1 bg-indigo-600/20 text-indigo-400 py-3 rounded-xl text-[10px] font-black uppercase"><i className="fa-solid fa-file-pdf mr-1"></i> PDF İndir</button>
+                                                <button onClick={() => whatsappGonder(i, seciliKisi.ad)} className="flex-1 bg-green-600/20 text-green-400 py-3 rounded-xl text-[10px] font-black uppercase"><i className="fa-brands fa-whatsapp text-sm mr-1"></i> Gönder</button>
+                                                {i.foto && <button onClick={() => setGorselModal(i.foto)} className="w-full mt-2 bg-white/5 py-3 rounded-xl text-[10px] font-black uppercase text-gray-400 hover:text-white"><i className="fa-solid fa-receipt mr-1"></i> Fatura / Görüntü</button>}
                                             </div>
                                         </div>
                                     ))}
                                 </div>
                             </div>
                         )}
-                                                                   {tab === 'gunluk' && (
-                            <div className="space-y-6 fade-in pt-2 pb-10">
+
+                        {aktifSekme === 'gunluk' && (
+                            <div className="space-y-6 fade-in pt-2">
                                 <form onSubmit={(e) => {
                                     e.preventDefault();
-                                    setHatirlatmalar([{ id: Date.now(), baslik: e.target.baslik.value, tarih: e.target.tarih.value }, ...hatirlatmalar]);
+                                    const baslik = e.target.baslik.value;
+                                    const tarih = e.target.tarih.value;
+                                    setHatirlaticilar([{ id: Date.now(), baslik, tarih }, ...hatirlaticilar]);
                                     e.target.reset();
-                                }} className="glass-panel p-7 rounded-[3rem] space-y-4 bg-indigo-900/10 border-indigo-500/20 shadow-2xl relative overflow-hidden">
-                                    <h3 className="text-[10px] text-indigo-400 font-black uppercase tracking-[0.3em] flex items-center gap-3"><i className="fa-solid fa-bell-concierge text-xl animate-bounce"></i> Hatırlatıcı Kur</h3>
-                                    <input name="baslik" placeholder="Neyi unutmamalıyım?" className="w-full bg-black/60 border border-white/10 rounded-2xl p-5 text-[13px] font-black text-white outline-none focus:border-indigo-500 shadow-inner" required />
-                                    <input name="tarih" type="date" className="w-full bg-black/60 border border-white/10 rounded-2xl p-5 text-xs font-bold text-white outline-none appearance-none shadow-inner" required defaultValue={bugun} />
-                                    <button type="submit" className="w-full bg-indigo-600 text-white py-4 rounded-2xl font-black text-[11px] uppercase tracking-widest active:scale-95 shadow-xl shadow-indigo-600/30">ALARM KUR</button>
+                                }} className="glass-panel p-6 rounded-[2.5rem] space-y-4 border-indigo-500/20 bg-indigo-900/10 shadow-lg relative overflow-hidden">
+                                    <div className="absolute top-0 right-0 w-32 h-32 bg-indigo-500/10 rounded-full blur-3xl pointer-events-none"></div>
+                                    <h3 className="text-[10px] text-indigo-400 font-black uppercase tracking-[0.2em] ml-2 flex items-center gap-2">
+                                        <i className="fa-solid fa-bell text-lg animate-pulse"></i> Yeni Hatırlatıcı / Alarm Kur
+                                    </h3>
+                                    <input name="baslik" placeholder="Neyi hatırlatayım?" className="w-full bg-black/50 border border-white/10 rounded-[1.5rem] p-5 text-sm font-bold outline-none text-white focus:border-indigo-500" required />
+                                    <input name="tarih" type="date" className="w-full bg-black/50 border border-white/10 rounded-[1.5rem] p-5 text-xs font-bold outline-none text-white focus:border-indigo-500 appearance-none" required defaultValue={bugun} />
+                                    <button type="submit" className="w-full bg-indigo-600 text-white py-4 rounded-[1.5rem] font-black text-xs uppercase tracking-[0.3em] active:scale-95">ALARM KUR</button>
                                 </form>
 
                                 <form onSubmit={(e) => {
                                     e.preventDefault();
-                                    setNotlar([{ id: Date.now(), tarih: bugun, kazanc: Number(e.target.kazanc.value) }, ...notlar]);
+                                    const kazanc = e.target.kazanc.value;
+                                    setNotlar([{ id: Date.now(), tarih: bugun, kazanc: Number(kazanc) }, ...notlar]);
                                     e.target.reset();
-                                }} className="glass-panel p-7 rounded-[3rem] space-y-4 shadow-2xl border-emerald-500/10">
-                                    <h3 className="text-[10px] text-emerald-500 font-black uppercase tracking-[0.3em] flex items-center gap-3"><i className="fa-solid fa-vault text-xl"></i> Günün Net Kazancı</h3>
+                                }} className="glass-panel p-6 rounded-[2.5rem] space-y-4 shadow-lg">
+                                    <h3 className="text-[10px] text-gray-400 font-black uppercase tracking-widest ml-2 flex items-center gap-2">
+                                        <i className="fa-solid fa-calendar-day text-indigo-400"></i> Sadece Kazanç Girişi
+                                    </h3>
                                     <div className="relative">
-                                        <input name="kazanc" type="number" placeholder="Örn: 3500" className="w-full bg-emerald-950/20 border border-emerald-500/20 rounded-2xl p-7 text-3xl font-black text-emerald-400 outline-none shadow-inner tracking-tighter" required />
-                                        <span className="absolute right-6 top-1/2 -translate-y-1/2 text-emerald-600 font-black text-xl">₺</span>
+                                        <label className="absolute -top-2 left-4 bg-[#0a0a0b] px-1 text-[8px] font-black text-emerald-500">Günün Net Kazancı (₺)</label>
+                                        <input name="kazanc" type="number" placeholder="Örn: 1500" className="w-full bg-emerald-950/20 border border-emerald-500/20 rounded-2xl p-5 text-xl font-black text-emerald-400 outline-none" required />
                                     </div>
-                                    <button type="submit" className="w-full bg-emerald-600 text-white py-5 rounded-2xl font-black text-[11px] uppercase tracking-widest active:scale-95 shadow-xl shadow-emerald-600/30">KAZANCI KAYDET</button>
+                                    <button type="submit" className="w-full bg-emerald-600 text-white py-4 rounded-2xl font-black text-xs uppercase tracking-widest active:scale-95">KAZANCI KAYDET</button>
                                 </form>
 
-                                <div className="glass-panel p-6 rounded-[3rem] border-white/5 shadow-2xl">
-                                    <h3 className="text-[10px] text-gray-500 font-black uppercase tracking-[0.2em] mb-8 text-center italic">Son 7 Günlük Kazanç</h3>
+                                <div className="glass-panel p-5 rounded-[2.5rem]">
+                                    <h3 className="text-[10px] text-gray-400 font-black uppercase tracking-widest mb-4 ml-2">Son 7 Gün Kazanç Grafiği</h3>
                                     <canvas id="kazancGrafik" className="w-full h-48"></canvas>
                                 </div>
 
                                 <div className="space-y-4">
                                     {notlar.map(n => (
-                                        <div key={n.id} className="glass-panel p-5 rounded-[2.2rem] flex justify-between items-center shadow-lg border-white/5 relative overflow-hidden active:bg-white/5 transition-all">
-                                            <div className="absolute left-0 top-0 bottom-0 w-1.5 bg-indigo-500/50"></div>
-                                            <span className="text-[10px] text-gray-500 font-black uppercase tracking-widest ml-4 italic">{n.tarih}</span>
-                                            <div className="flex items-center gap-5">
-                                                <span className="font-black text-emerald-400 text-xl tracking-tighter">+{para(n.kazanc)}</span>
-                                                <button onClick={() => setNotlar(notlar.filter(x => x.id !== n.id))} className="text-gray-700 hover:text-red-500 transition-colors"><i className="fa-solid fa-trash-can text-sm"></i></button>
+                                        <div key={n.id} className="glass-panel p-5 rounded-[2rem] relative overflow-hidden flex justify-between items-center">
+                                            <div className="absolute left-0 top-0 bottom-0 w-1.5 bg-indigo-500"></div>
+                                            <span className="text-[10px] text-gray-400 font-black uppercase tracking-widest ml-4"><i className="fa-regular fa-calendar mr-1"></i> {n.tarih}</span>
+                                            <div className="flex items-center gap-4">
+                                                <span className="font-black text-emerald-400 text-lg">+{formatPara(n.kazanc)}</span>
+                                                <button onClick={() => { if(confirm('Sileyim mi?')) setNotlar(notlar.filter(x => x.id !== n.id)); }} className="text-gray-600 hover:text-red-500"><i className="fa-solid fa-trash-can"></i></button>
                                             </div>
                                         </div>
                                     ))}
                                 </div>
                             </div>
                         )}
+
                     </main>
-                            {modalOdeme && (
-                        <div className="fixed inset-0 bg-black/98 z-[100] flex items-center justify-center p-8 backdrop-blur-xl fade-in">
-                            <div className="bg-[#111] border border-white/10 p-10 rounded-[4rem] w-full max-w-sm space-y-8 shadow-[0_0_50px_rgba(0,0,0,0.8)] relative text-center">
-                                <button onClick={() => setModalOdeme(null)} className="absolute top-8 right-8 text-gray-600 text-2xl active:scale-75"><i className="fa-solid fa-xmark"></i></button>
-                                <p className="text-[11px] font-black text-gray-600 uppercase tracking-[0.3em] mb-3">Güncel Bakiye</p>
-                                <p className="text-4xl font-black text-white tracking-tighter italic mb-8">{para(modalOdeme.kalan)}</p>
+
+                    {odemeModal && (
+                        <div className="fixed inset-0 bg-black/95 z-[100] flex items-center justify-center p-5 backdrop-blur-md fade-in">
+                            <div className="bg-[#111] border border-white/10 p-6 rounded-[2.5rem] w-full max-w-sm space-y-5">
+                                <div className="flex justify-between items-center border-b border-white/5 pb-4">
+                                    <h3 className="text-sm font-black text-white uppercase tracking-widest">Borç Düş / Tahsil Et</h3>
+                                    <button onClick={() => setOdemeModal(null)} className="text-gray-500 text-xl"><i className="fa-solid fa-xmark"></i></button>
+                                </div>
+                                <div className="bg-black/50 p-4 rounded-2xl text-center border border-white/5">
+                                    <p className="text-[10px] font-black text-gray-500 uppercase tracking-widest mb-1">Kalan Bakiye</p>
+                                    <p className="text-3xl font-black text-white">{formatPara(odemeModal.kalan)}</p>
+                                </div>
                                 <form onSubmit={(e) => {
                                     e.preventDefault();
-                                    const m = Number(e.target.od.value);
-                                    if(m > modalOdeme.kalan) return alert("Hata: Ödeme kalandan fazla olamaz!");
-                                    const yI = islemler.map(i => {
-                                        if(i.id === modalOdeme.id) {
-                                            const yO = [...(i.odemeler || []), { tarih: bugun, miktar: m }];
-                                            return { ...i, kalan: i.kalan - m, odemeler: yO };
+                                    const odenen = Number(e.target.odenen.value);
+                                    if(odenen > odemeModal.kalan) return alert("Kalan tutardan fazla giremezsin!");
+                                    const yeniIslemler = islemler.map(i => {
+                                        if(i.id === odemeModal.id) {
+                                            const yeniOdemeler = [...(i.odemeler || []), { tarih: bugun, miktar: odenen }];
+                                            return { ...i, kalan: i.kalan - odenen, odemeler: yeniOdemeler };
                                         }
                                         return i;
                                     });
-                                    setIslemler(yI);
-                                    setModalOdeme(null);
-                                }} className="space-y-6 text-left">
-                                    <input name="od" type="number" placeholder="Ödenen Tutar" max={modalOdeme.kalan} className="w-full bg-black border border-white/10 rounded-3xl p-6 text-3xl font-black text-white outline-none focus:border-emerald-500 shadow-inner text-center tracking-tighter" required autoFocus />
-                                    <button type="submit" className="w-full bg-emerald-600 text-white py-5 rounded-3xl font-black text-xs uppercase tracking-[0.3em] active:scale-95 shadow-xl shadow-emerald-600/20">İŞLEMİ ONAYLA</button>
+                                    setIslemler(yeniIslemler);
+                                    setOdemeModal(null);
+                                }}>
+                                    <input name="odenen" type="number" placeholder="Ödenen Tutar (₺)" max={odemeModal.kalan} className="w-full bg-black border border-white/10 rounded-2xl p-5 text-xl font-black text-white outline-none focus:border-emerald-500 mb-4" required autoFocus />
+                                    <button type="submit" className="w-full bg-emerald-600 text-white py-4 rounded-2xl font-black text-xs uppercase tracking-[0.2em] active:scale-95">ÖDEMEYİ İŞLE</button>
                                 </form>
                             </div>
                         </div>
                     )}
 
-                    <div className="fixed bottom-[110px] left-7 z-[60]">
-                        {hesapMakinesi.acik && (
-                            <div className="bg-[#111] border border-white/10 rounded-[3rem] p-6 shadow-2xl mb-5 w-64 fade-in backdrop-blur-3xl border border-indigo-500/10">
-                                <div className="bg-black p-5 rounded-2xl mb-5 font-mono text-2xl text-right text-indigo-400 h-20 flex items-center justify-end border border-white/5 shadow-inner overflow-hidden italic">{hesapMakinesi.ekran || '0'}</div>
-                                <div className="grid grid-cols-4 gap-3">
+                    <div className="fixed bottom-[100px] left-5 z-[60]">
+                        {hesapAcik && (
+                            <div className="bg-[#111] border border-white/10 rounded-[2rem] p-4 shadow-2xl mb-4 w-56 fade-in backdrop-blur-3xl">
+                                <div className="bg-black p-3 rounded-2xl mb-3 font-mono text-xl text-right text-white h-14 flex items-center justify-end border border-white/5">{hesapEkrani || '0'}</div>
+                                <div className="grid grid-cols-4 gap-2">
                                     {['7','8','9','/','4','5','6','*','1','2','3','-','C','0','=','+'].map(k => (
-                                        <button key={k} onClick={() => tusla(k)} className={`h-12 rounded-xl font-black text-[13px] active:scale-75 transition-all ${['C'].includes(k) ? 'bg-red-600 text-white shadow-lg' : ['/','*','-','+','='].includes(k) ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-600/20' : 'bg-white/5 text-white border border-white/5'}`}>{k}</button>
+                                        <button key={k} onClick={() => hesaplaTus(k)} className={`h-12 rounded-xl font-black text-sm active:scale-90 ${['C'].includes(k) ? 'bg-red-500 text-white' : ['/','*','-','+','='].includes(k) ? 'bg-indigo-600 text-white' : 'bg-white/10 text-white'}`}>{k}</button>
                                     ))}
                                 </div>
                             </div>
                         )}
-                        <button onClick={() => setHesapMakinesi({...hesapMakinesi, acik: !hesapMakinesi.acik})} className="w-16 h-16 bg-indigo-600 rounded-[2rem] shadow-2xl flex items-center justify-center text-3xl text-white border border-indigo-400/30 active:scale-90 shadow-indigo-600/30 transition-transform">
-                            <i className={`fa-solid ${hesapMakinesi.acik ? 'fa-xmark' : 'fa-calculator'}`}></i>
+                        <button onClick={() => setHesapAcik(!hesapAcik)} className="w-14 h-14 bg-indigo-600 rounded-[1.5rem] shadow-2xl flex items-center justify-center text-xl text-white border border-indigo-400/30 active:scale-90">
+                            <i className={`fa-solid ${hesapAcik ? 'fa-xmark' : 'fa-calculator'}`}></i>
                         </button>
                     </div>
 
-                    {modalGorsel && (
-                        <div className="fixed inset-0 bg-black/99 z-[120] flex items-center justify-center p-6 fade-in backdrop-blur-3xl">
-                            <button onClick={() => setModalGorsel(null)} className="absolute top-10 right-10 text-white bg-white/10 w-16 h-16 rounded-full flex items-center justify-center text-3xl hover:bg-white/20 border border-white/10 shadow-2xl active:scale-75 transition-transform"><i className="fa-solid fa-xmark"></i></button>
-                            <img src={modalGorsel} className="max-w-full max-h-[85vh] rounded-[3rem] object-contain border border-white/10 shadow-[0_0_100px_rgba(0,0,0,1)]" />
+                    {gorselModal && (
+                        <div className="fixed inset-0 bg-black/98 z-[100] flex items-center justify-center p-4 fade-in">
+                            <button onClick={() => setGorselModal(null)} className="absolute top-6 right-6 text-white bg-white/10 w-12 h-12 rounded-full flex items-center justify-center text-2xl"><i className="fa-solid fa-xmark"></i></button>
+                            <img src={gorselModal} className="max-w-full max-h-[85vh] rounded-[2rem] object-contain border border-white/10" />
                         </div>
                     )}
 
-                    <nav className="fixed bottom-0 left-0 right-0 bg-[#030303]/98 backdrop-blur-3xl border-t border-white/5 flex justify-around px-2 py-6 pb-11 z-50 shadow-[0_-20px_50px_rgba(0,0,0,0.8)]">
+                    <nav className="fixed bottom-0 left-0 right-0 bg-[#030303]/95 backdrop-blur-xl border-t border-white/5 flex justify-around px-2 py-4 pb-8 z-50">
                         {[
-                            { id: 'ozet', icon: 'fa-table-columns', ad: 'Özet' },
-                            { id: 'defter', icon: 'fa-book-atlas', ad: 'Defter' },
-                            { id: 'kisiler', icon: 'fa-shop', ad: 'Dükkan' },
-                            { id: 'gunluk', icon: 'fa-chart-simple', ad: 'Günlük' }
+                            { id: 'ozet', icon: 'fa-chart-pie', ad: 'Özet' },
+                            { id: 'defter', icon: 'fa-book-open', ad: 'Defter' },
+                            { id: 'kisiler', icon: 'fa-store', ad: 'Dükkanlar' },
+                            { id: 'gunluk', icon: 'fa-calendar-day', ad: 'Günlük' }
                         ].map(t => (
-                            <button key={t.id} onClick={() => { setTab(t.id); setSeciliKisi(null); setHesapMakinesi({...hesapMakinesi, acik: false}); }} className={`flex flex-col items-center gap-2.5 w-16 relative transition-all ${tab === t.id && !seciliKisi ? 'text-indigo-400 scale-110' : 'text-gray-600'}`}>
-                                {tab === t.id && !seciliKisi && <div className="absolute -top-6 w-10 h-1.5 bg-indigo-500 rounded-b-3xl shadow-[0_5px_15px_rgba(79,70,229,0.8)]"></div>}
-                                <i className={`fa-solid ${t.icon} text-2xl`}></i>
-                                <span className="text-[9px] font-black uppercase tracking-[0.15em]">{t.ad}</span>
+                            <button key={t.id} onClick={() => { setAktifSekme(t.id); setSeciliKisi(null); setHesapAcik(false); }} className={`flex flex-col items-center gap-1.5 w-16 relative ${aktifSekme === t.id && !seciliKisi ? 'text-indigo-400' : 'text-gray-500'}`}>
+                                <i className={`fa-solid ${t.icon} text-xl`}></i>
+                                <span className="text-[9px] font-black uppercase tracking-widest">{t.ad}</span>
                             </button>
                         ))}
                     </nav>
